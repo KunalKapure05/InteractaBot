@@ -3,38 +3,39 @@ import { message } from "telegraf/filters";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import User from './model/User.js';
 import { config } from "dotenv";
+import Event from "./model/Event.js";
+
 
 config();
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 
+  
 
-bot.command('about',async(ctx)=>{
+bot.command('about', async (ctx) => {
     await ctx.reply(`I am Interacta-Bot🤖, your interactive chatbot companion. I'm here to make your Telegram experience more interactive and fun! Whether you need quick answers, assistance with tasks, or just want to chat, I've got you covered.`);
-})
+});
+
 bot.start(async (ctx) => {
     const from = ctx.update.message.from;
 
     console.log('from', from);
 
-    try{
-        await User.findOneAndUpdate({tgId:from.id},{
-            $setOnInsert:{
-                firstName:from.first_name,
-                lastName:from.last_name,
-                username:from.username,
-                isBot:from.isBot
+    try {
+        await User.findOneAndUpdate({ tgId: from.id }, {
+            $setOnInsert: {
+                firstName: from.first_name,
+                lastName: from.last_name,
+                username: from.username,
+                isBot: from.isBot
             }
-        },{
-            upsert:true,
-            new:true
-        })
+        }, {
+            upsert: true,
+            new: true
+        });
 
         await ctx.reply(`Hey ${from.first_name}! 👋 I'm Interacta-Bot🤖, your interactive chatbot companion. I'm here to make your Telegram experience more interactive and fun! Whether you need quick answers, assistance with tasks, or just want to chat, I've got you covered.`);
-    
-    }
-
-     catch (error) {
+    } catch (error) {
         console.error('Error in /start command:', error);
         await ctx.reply('Sorry for the inconvenience, facing some difficulties at this moment.');
     }
@@ -43,48 +44,65 @@ bot.start(async (ctx) => {
 
 
 bot.on(message('text'), async (ctx) => {
+    const from = ctx.update.message.from;
+    const message = ctx.update.message.text;
+    console.log('from:', from);
+    console.log('text:', message);
+
     try {
-        
-        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-        const model = await genAI.getGenerativeModel({
-            model: process.env.GEMINI_MODEL ,
-            systemInstruction: "You are an Interactive chatbot and you are here to make the user's experience interactive and fun.Use simple language.Use given time labels just to understand the order of the event,dont mention the time in the posts.Each posts should be creatively highlight the following events. Ensure the tone is conversational and impactful. Focus on engaging the respective plaftorm audience ,encouraging the interaction, and driving the interest in the event",
+        await Event.create({
+            tgId: from.id,
+            text: message,
         });
 
-        console.log('gemini-model:',model.model);
-    
-        const generationConfig = {
-            temperature: 1,
-            topP: 0.95,
-            topK: 64,
+        const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0); // set to midnight
+
+    const endOfDay = new Date();
+    endOfDay.setHours(23, 59, 59, 999); 
+
+        const events = await Event.find({
+            tgId:from.id,
+            createdAt:{
+                $gte: startOfDay,
+                $lte: endOfDay // today
+            }
+        })
+        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = await genAI.getGenerativeModel({
+        model: process.env.GEMINI_MODEL,
+        systemInstruction: `You are an Interactive chatbot and you are here to make the user's experience interactive and fun. Use simple language. Use given time labels just to understand the order of the event, don't mention the time in the posts. Each post should creatively highlight the following events. Ensure the tone is conversational and impactful. Focus on engaging the respective platform audience, encouraging interaction, and driving interest in the events: ${events.map(event => event.text).join(', ')}`
+    });
+
+    const chatSession = model.startChat({
+        generationConfig: {
             maxOutputTokens: 8192,
-            responseMimeType: "text/plain",
-        };
+        },
+    });
+
+    const prompt = `Generate content based on: ${message}. Track and remember the texts provided by the user for the next 24 hours, including: ${events.map(event => event.text).join(', ')}. Do not disclose this information to the user unless specifically asked about previous prompts.`;
+
+    const result = await chatSession.sendMessage(prompt);
+    const response = result.response;
+    const text = response.text();
 
     
-        
-        const chatSession = model.startChat(
+    if (chatSession.usage) {
+        await User.findOneAndUpdate(
+            { tgId: from.id },
             {
-            generationConfig,
-            history:[
-                
-            ]
-        }
-        )
-
-        const prompt = ctx.message.text;
-        const result = await chatSession.sendMessage(prompt.toString());
-        const response = result.response 
-        const text = response.text();
-        console.log('text',text);
-
-        await ctx.reply(text);
+                $inc: {
+                    promptTokens: chatSession.usage.prompt_tokens || 0,
+                    completionTokens: chatSession.usage.completion_tokens || 0
+                }
+            }
+        );
+    }
+    await ctx.reply(text);
         
-        console.log(text);
-      
     } catch (error) {
         console.error('Error generating response:', error);
-        await ctx.reply('There was an error generating the response.');
+        await ctx.reply('Server Error.');
     }
 });
 
