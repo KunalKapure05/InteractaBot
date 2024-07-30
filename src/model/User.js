@@ -28,7 +28,6 @@ const userSchema = new mongoose.Schema({
             required: true,
             unique: true
         },
-
         promptToken:{
             type:Number,
             required:false
@@ -39,8 +38,6 @@ const userSchema = new mongoose.Schema({
             type:Number,
             required:false
         }
-
-
 },{
     timestamps: true
 })

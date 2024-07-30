@@ -1,6 +1,6 @@
 import { Telegraf } from "telegraf";
 import { message } from "telegraf/filters";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import User from './model/User.js';
 import { config } from "dotenv";
 import Event from "./model/Event.js";
@@ -12,9 +12,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 
   
 
-bot.command('about', async (ctx) => {
-    await ctx.reply(`I am Interacta-Bot🤖, your interactive chatbot companion. I'm here to make your Telegram experience more interactive and fun! Whether you need quick answers, assistance with tasks, or just want to chat, I've got you covered.`);
-});
+
 
 bot.start(async (ctx) => {
     const from = ctx.update.message.from;
@@ -68,9 +66,30 @@ bot.on(message('text'), async (ctx) => {
                 $lte: endOfDay // today
             }
         })
+
+         
+        const safetySettings = [
+            {
+            category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            },
+            {
+            category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            },
+
+            {
+            category:HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            }
+
+        ];
+
+
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = await genAI.getGenerativeModel({
         model: process.env.GEMINI_MODEL,
+        safetySettings ,
         systemInstruction: `You are an Interactive chatbot and you are here to make the user's experience interactive and fun. Use simple language. Use given time labels just to understand the order of the event, don't mention the time in the posts. Each post should creatively highlight the following events. Ensure the tone is conversational and impactful. Focus on engaging the respective platform audience, encouraging interaction, and driving interest in the events: ${events.map(event => event.text).join(', ')}`
     });
 
@@ -80,13 +99,12 @@ bot.on(message('text'), async (ctx) => {
         },
     });
 
-    const prompt = `Generate content based on: ${message}. Track and remember the texts provided by the user for the next 24 hours, including: ${events.map(event => event.text).join(', ')}. Do not disclose this information to the user unless specifically asked about previous prompts.`;
+    const prompt = `Generate content based on: ${message}. Track and remember the texts provided by the user including: ${events.map(event => event.text).join(', ')}. Do not disclose this information to the user unless specifically asked about previous prompts and also give warning if you detect any prompt to be encouraging harrasement or any explicit malicious content.`;
 
     const result = await chatSession.sendMessage(prompt);
     const response = result.response;
     const text = response.text();
 
-    
     if (chatSession.usage) {
         await User.findOneAndUpdate(
             { tgId: from.id },
@@ -98,6 +116,8 @@ bot.on(message('text'), async (ctx) => {
             }
         );
     }
+
+    
     await ctx.reply(text);
         
     } catch (error) {
